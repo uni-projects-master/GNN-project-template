@@ -1,3 +1,7 @@
+import sys
+path='C:/Users/solma/OneDrive/Documents/GitHub/Empowering-Simple-Graph-Convolutional-Networks'
+sys.path.append(path)
+
 import torch as th
 from torch import nn
 import torch

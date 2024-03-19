@@ -3,6 +3,11 @@ import torch
 import numpy as np
 from torch.nn import  Module
 import time
+
+import sys
+path='C:/Users/solma/OneDrive/Documents/GitHub/Empowering-Simple-Graph-Convolutional-Networks'
+sys.path.append(path)
+
 from utils.utils_method import prepare_log_files
 import torch.nn.functional as F
 

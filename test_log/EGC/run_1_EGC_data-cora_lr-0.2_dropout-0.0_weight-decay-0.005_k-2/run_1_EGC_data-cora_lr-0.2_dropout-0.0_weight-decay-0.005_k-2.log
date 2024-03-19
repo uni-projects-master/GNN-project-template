@@ -1,0 +1,10 @@
+run_1_EGC_data-cora_lr-0.2_dropout-0.0_weight-decay-0.005_k-2
+2024-03-19 10:09:49.989773
+
+dataset_name: 	cora
+learning_rate: 	0.2
+dropout: 	0.0
+weight_decay: 	0.005
+k: 	2
+test_epoch: 	1
+self_loops: 	False
