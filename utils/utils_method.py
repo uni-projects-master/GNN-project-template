@@ -16,27 +16,31 @@ def prepare_log_files(test_name, log_dir):
 
     return train_log, test_log, valid_log
 
-def printParOnFile(test_name, log_dir, par_list):
 
+def printParOnFile(test_name, log_dir, par_list):
     assert isinstance(par_list, dict), "par_list as to be a dictionary"
-    f=open(os.path.join(log_dir,test_name+".log"),'w+')
+    f = open(os.path.join(log_dir, test_name + ".log"), 'w+')
     f.write(test_name)
     f.write("\n")
     f.write(str(datetime.now().utcnow()))
     f.write("\n\n")
     for key, value in par_list.items():
-        f.write(str(key)+": \t"+str(value))
+        f.write(str(key) + ": \t" + str(value))
         f.write("\n")
+
+
+def normalize(h):
+    return (h - h.mean(0)) / h.std(0)
+
 
 class IdFun(nn.Module):
     def forward(self, input):
         return input
 
-def normalize(h):
-    return (h-h.mean(0))/h.std(0)
 
 class SimpleMultiLayerNN(torch.nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, hidden_act_fun=torch.nn.ReLU(), out_act_fun=lambda x:x, device=None):
+    def __init__(self, input_size, hidden_size, output_size, hidden_act_fun=torch.nn.ReLU(), out_act_fun=lambda x: x,
+                 device=None):
         super(SimpleMultiLayerNN, self).__init__()
         if device is None:
             self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -45,16 +49,15 @@ class SimpleMultiLayerNN(torch.nn.Module):
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.output_size = output_size
-        self.hidden_act_fun=hidden_act_fun
+        self.hidden_act_fun = hidden_act_fun
         self.output_act_fun = out_act_fun
 
         self.hidden_layers = torch.nn.ModuleList().to(self.device)
-        hidden_size_prev_layer=input_size
+        hidden_size_prev_layer = input_size
         for current_layer_size in hidden_size:
-            self.hidden_layers.append(torch.nn.Linear(hidden_size_prev_layer,current_layer_size,bias=True))
-            hidden_size_prev_layer=current_layer_size
-        self.hidden_layers.append(torch.nn.Linear(hidden_size_prev_layer,output_size,bias=True))
-
+            self.hidden_layers.append(torch.nn.Linear(hidden_size_prev_layer, current_layer_size, bias=True))
+            hidden_size_prev_layer = current_layer_size
+        self.hidden_layers.append(torch.nn.Linear(hidden_size_prev_layer, output_size, bias=True))
 
     def reset_parameters(self):
         for layer in self.hidden_layers:
@@ -62,5 +65,5 @@ class SimpleMultiLayerNN(torch.nn.Module):
 
     def forward(self, x):
         for layer in self.hidden_layers[:-1]:
-            x=self.hidden_act_fun(layer(x))
+            x = self.hidden_act_fun(layer(x))
         return self.output_act_fun(self.hidden_layers[-1](x))

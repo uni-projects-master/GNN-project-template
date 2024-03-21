@@ -1,100 +1,124 @@
+import os
 import sys
-path='C:/Users/solma/OneDrive/Documents/GitHub/Empowering-Simple-Graph-Convolutional-Networks'
-sys.path.append(path)
-
-import torch as th
-from torch import nn
+import dgl
 import torch
-import numpy as np
-from dgl import function as fn
-from dgl.base import DGLError
+import torch.nn.functional as F
+from dgl.nn.pytorch.conv import GraphConv
+from torch import nn
+
+sys.path.append(os.path.join(os.path.dirname(__file__), '../../'))
+
+
+class LGCore(nn.Module):
+    def __init__(self, in_feats, out_feats, agg_type, dropout, activation):
+        super(LGCore, self).__init__()
+        self.out_feats = out_feats
+        self.agg_type = agg_type
+        self.activation = activation
+        self.convLayer = GraphConv(in_feats, out_feats)
+        self.fusionLayer = GraphConv(in_feats, out_feats)
+        self.conv_w = nn.Parameter(torch.rand(out_feats))
+        self.topDown_w = nn.Parameter(torch.rand(out_feats))
+        self.bottomUp_w = nn.Parameter(torch.rand(out_feats))
+        self.dropout = nn.Dropout(p=dropout)
+        self.layer_norm = nn.LayerNorm(out_feats)
+
+    def forward(self, g, feats, inc):
+        g = dgl.add_self_loop(g)
+        if self.agg_type == 'top_down':
+            curr_h = feats[0]
+            next_h = feats[1]
+            curr_inc = inc[0]
+            conv_layer = self.convLayer(g, curr_h) * self.conv_w.unsqueeze(0)
+            top_down_layer = self.fusionLayer(g, torch.mm(curr_inc, next_h)) * self.topDown_w.unsqueeze(0)
+            result = torch.add(conv_layer, top_down_layer)
+
+        elif self.agg_type == 'bottom_up':
+            curr_h = feats[0]
+            prev_h = feats[1]
+            prev_inc_y = inc[0]
+            conv_layer = self.convLayer(g, curr_h) * self.conv_w.unsqueeze(0)
+            bottom_up_layer = self.fusionLayer(g, torch.mm(prev_inc_y, prev_h)) * self.bottomUp_w.unsqueeze(0)
+            result = torch.add(conv_layer, bottom_up_layer)
+
+        elif self.agg_type == 'both':
+            curr_h = feats[0]
+            prev_h = feats[1]
+            next_h = feats[2]
+            inc = inc[0]
+            conv_layer = self.convLayer(g, curr_h) * self.conv_w.unsqueeze(0)
+            bottom_up_layer = self.fusionLayer(g, torch.mm(inc, prev_h)) * self.bottomUp_w.unsqueeze(0)
+            top_down_layer = self.fusionLayer(g, torch.mm(inc, next_h)) * self.topDown_w.unsqueeze(0)
+            result = torch.add(conv_layer, bottom_up_layer, top_down_layer)
+
+        result = self.layer_norm(result)
+        result = self.dropout(result)
+        if self.activation == 'ReLU':
+            result = F.relu(result)
+        else:
+            result = F.leaky_relu(result)
+
+        return result
+
+
+def get_inc(g, inc_type):
+    return g.inc(inc_type)
+
 
 class LGConv(nn.Module):
-    def __init__(self,
-                 in_feats,
-                 out_feats,
-                 k=1,
-                 cached=False,
-                 bias=True,
-                 norm=None,
-                 allow_zero_in_degree=False):
+    def __init__(self, in_feats, out_feats, lg_list, inc_type, dropout, activation):
         super(LGConv, self).__init__()
-        self.in_feats=in_feats
-        self.out_feats=out_feats
-        self.fc = nn.Linear(in_feats, out_feats, bias=bias)
-        self._cached = cached
-        self._cached_h = None
-        self._k = k
-        self.norm = norm
-        self._allow_zero_in_degree = allow_zero_in_degree
-        self._alpha=nn.ParameterList()
-        for i in range(self._k+1):
-            self._alpha.append(nn.Parameter(torch.Tensor(1)))
-        self.reset_parameters()
+        self.in_feats = in_feats
+        self.out_feats = out_feats
+        self.inc_type = inc_type
+        self.lg_list = lg_list
+        self.top_down = LGCore(self.in_feats, self.out_feats, 'top_down', dropout, activation)
+        self.bottom_up = LGCore(self.in_feats, self.out_feats, 'bottom_up', dropout, activation)
+        self.both = LGCore(self.in_feats, self.out_feats, 'both', dropout, activation)
 
-    def reset_parameters(self):
-        stdv = 1. / np.sqrt(self.out_feats)
-        self.fc.weight.data.uniform_(-stdv, stdv)
-        if self.fc.bias is not None:
-            nn.init.zeros_(self.fc.bias)
-
-        stdvk = 1. / np.sqrt(self._k)
-        for i in range(self._k+1):
-            self._alpha[i].data.uniform_(-stdvk, stdvk)
-
-
-    def set_allow_zero_in_degree(self, set_value):
-        self._allow_zero_in_degree = set_value
-
-    def forward(self, graph, feat):
-        with graph.local_scope():
-            if not self._allow_zero_in_degree:
-                if (graph.in_degrees() == 0).any():
-                    raise DGLError('There are 0-in-degree nodes in the graph, '
-                                   'output for those nodes will be invalid. '
-                                   'This is harmful for some applications, '
-                                   'causing silent performance regression. '
-                                   'Adding self-loop on the input graph by '
-                                   'calling `g = dgl.add_self_loop(g)` will resolve '
-                                   'the issue. Setting ``allow_zero_in_degree`` '
-                                   'to be `True` when constructing this module will '
-                                   'suppress the check and let the code run.')
-
-            if self._cached_h is not None:
-                feat_list = self._cached_h
-                result = torch.zeros(feat_list[0].shape[0], self.out_feats).to(feat_list[0].device)
-                for i, k_feat in enumerate(feat_list):
-                    # print(i,":",k_feat*self._alpha[i])
-                    result += self.fc(k_feat * self._alpha[i])
+    def forward(self, lg_h):
+        new_lg_h = []
+        for i in range(0, len(self.lg_list)):
+            g = self.lg_list[i]
+            current_h = lg_h[i]
+            # finding the previous graph's hidden embedding
+            # if it's the first graph, do only top-down
+            if i == 0:
+                # get the next graph's embedding
+                next_h = lg_h[i+1]
+                # get the incident matrix B_0
+                g_inc = get_inc(g, self.inc_type)
+                # apply top-down aggregation
+                feats = [current_h, next_h]
+                inc = [g_inc]
+                new_h = self.top_down(g, feats, inc)
+                new_lg_h.append(new_h)
+            # if it's the last graph in the hierarchy, do only bottom-up
+            elif i == (len(self.lg_list) - 1):
+                # get the prev graph's embedding
+                prev_h = lg_h[i-1]
+                # get the prev graph's incident matrix
+                prev_g = self.lg_list[i-1]
+                prev_g_inc = get_inc(prev_g, self.inc_type)
+                prev_g_inc_y = torch.transpose(prev_g_inc, 0, 1)
+                feats = [current_h, prev_h]
+                inc = [prev_g_inc_y]
+                new_h = self.bottom_up(g, feats, inc)
+                new_lg_h.append(new_h)
+            # if it's in-between, apply both
             else:
-                feat_list = []
+                # get next and prev graphs' embeddings
+                prev_h = lg_h[i - 1]
+                next_h = lg_h[i + 1]
+                feats = [current_h, prev_h, next_h]
+                # get curr and prev graphs' inc matrix (B_i, B_(i-1)^T)
+                g_inc = get_inc(g, self.inc_type)
+                prev_g = self.lg_list[i - 1]
+                prev_g_inc = get_inc(prev_g, self.inc_type)
+                prev_g_inc_y = torch.transpose(prev_g_inc, 0, 1)
+                inc = [g_inc, prev_g_inc_y]
+                # apply aggregation layer
+                new_h = self.both(g, feats, inc)
+                new_lg_h.append(new_h)
 
-                # compute normalization
-                degs = graph.in_degrees().float().clamp(min=1)
-                norm = th.pow(degs, -0.5)
-                norm = norm.to(feat.device).unsqueeze(1)
-
-                feat_list.append(feat.float())
-
-                for i in range(self._k):
-
-                    feat = feat * norm
-                    feat=feat.float()
-                    graph.ndata['h'] = feat
-                    graph.update_all(fn.copy_u('h', 'm'),
-                                     fn.sum('m', 'h'))
-                    feat = graph.ndata.pop('h')
-                    feat = feat * norm
-                    feat_list.append(feat)
-
-                result = torch.zeros(feat_list[0].shape[0], self.out_feats).to(feat_list[0].device)
-                for i,k_feat in enumerate(feat_list):
-                    result += self.fc(k_feat*self._alpha[i])
-
-                if self.norm is not None:
-                    result = self.norm(result)
-
-                # cache feature
-                if self._cached:
-                    self._cached_h = feat_list
-            return result
+        return new_lg_h
