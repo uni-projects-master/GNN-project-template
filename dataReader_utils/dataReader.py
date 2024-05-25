@@ -7,10 +7,10 @@ import torch
 sys.path.append(os.path.join(os.path.dirname(__file__), '../../'))
 
 
-def DGLDatasetReader(dataset_name, lg_level, backtrack, problem_type, self_loops, device=None):
+def DGLDatasetReader(dataset_name, backtrack=True, lg_level=1, problem_type='fully-supervised', self_loops=True, device=None):
     dataset = load_data(dataset_name)
 
-    g = dataset[0]
+    g = dataset[0].to(device)
 
     n_classes = dataset.num_classes
     feat = g.ndata['feat']
@@ -53,19 +53,19 @@ def DGLDatasetReader(dataset_name, lg_level, backtrack, problem_type, self_loops
     if self_loops:
         g = dgl.add_self_loop(g)
 
-    line_graphs, lg_node_list = create_line_graphs(g, n_feats, lg_level, backtrack)
+    line_graphs, lg_node_list = create_line_graphs(g, n_feats, lg_level, backtrack, device)
 
     return line_graphs, feat, labels, n_classes, n_feats, lg_node_list, train_mask, test_mask, val_mask
 
 
-def create_line_graphs(g, num_feats, lg_level, backtrack):
+def create_line_graphs(g, num_feats, lg_level, backtrack, device):
     graphs = []
     num_node_list = []
     graphs.append(g)
     num_node_list.append(g.num_nodes())
     current_g = g
     for t in range(0, lg_level):
-        lg = current_g.line_graph(backtracking=backtrack)
+        lg = current_g.line_graph(backtracking=backtrack).to(device)
         graphs.append(lg)
         num_node_list.append(lg.num_nodes())
         current_g = lg
@@ -73,12 +73,12 @@ def create_line_graphs(g, num_feats, lg_level, backtrack):
 
 
 def load_data(dataset_name):
-    if dataset_name == 'cora':
+    if dataset_name == 'Cora':
         return dgl.data.CoraGraphDataset()
-    elif dataset_name == 'citeseer':
-        return dgl.data.CiteseerGraphDataset
-    elif dataset_name == 'pubmed':
-        return dgl.data.PubmedGraphDataset
+    elif dataset_name == 'Citeseer' or dataset_name == 'citeseer':
+        return dgl.data.CiteseerGraphDataset()
+    elif dataset_name == 'Pubmed':
+        return dgl.data.PubmedGraphDataset()
     elif dataset_name == "PPI":
         return dgl.data.PPIDataset
     else:

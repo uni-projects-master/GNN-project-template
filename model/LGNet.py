@@ -1,5 +1,7 @@
 from torch import nn
 import torch
+import torch.nn.functional as F
+from conv.LGCN import LGCN
 
 
 class LGNetwork(nn.Module):
@@ -11,9 +13,10 @@ class LGNetwork(nn.Module):
                  lg_node_list,
                  inc_type,
                  num_layers,
-                 activation,
-                 dropout,
-                 convLayer,
+                 update,
+                 activation='ReLU',
+                 dropout=0.0,
+                 convLayer=LGCN,
                  out_fun=nn.Softmax(dim=1),
                  device=None,
                  norm=None,
@@ -33,9 +36,9 @@ class LGNetwork(nn.Module):
         self.out_fun = out_fun
         self.num_layer = num_layers
 
-        self.layers.append(convLayer(in_feats, h_feats, lg_list, inc_type, dropout, activation))
+        self.layers.append(convLayer(in_feats, h_feats, lg_list, inc_type, dropout, activation, update))
         for i in range(num_layers):
-            self.layers.append(convLayer(h_feats, h_feats, lg_list, inc_type, dropout, activation))
+            self.layers.append(convLayer(h_feats, h_feats, lg_list, inc_type, dropout, activation, update))
 
         self.outLayer = nn.Linear(h_feats, n_classes)
 
@@ -45,7 +48,7 @@ class LGNetwork(nn.Module):
             if i == 0:
                 feat_list.append(feat_0)
             else:
-                feat_list.append(torch.zeros(self.lg_node_list[i], self.in_feats))
+                feat_list.append(torch.zeros(self.lg_node_list[i], self.in_feats).to(self.device))
         return feat_list
 
     def forward(self, features):
@@ -53,5 +56,5 @@ class LGNetwork(nn.Module):
         for layer in self.layers:
             lg_h = layer(lg_h)
         h = self.outLayer(lg_h[0])
-
+        h = F.relu(h)
         return self.out_fun(h), h
